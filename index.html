@@ -320,6 +320,23 @@
     .gift-floor { font-size: 0.58rem; color: var(--md-on-surface-variant); margin-top: 0.15rem; }
     .gift-count { font-size: 0.62rem; margin-top: 0.15rem; }
     .gift-count strong { color: var(--md-primary); }
+    .market-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+      gap: 0.55rem;
+      width: 100%;
+    }
+    .market-card {
+      background: var(--md-surface-container-high);
+      border-radius: var(--shape-lg);
+      padding: 0.5rem 0.35rem 0.45rem;
+      text-align: center;
+      box-shadow: var(--elev-1);
+      border: 1px solid color-mix(in srgb, var(--md-outline) 22%, transparent);
+    }
+    .market-price { font-size: 0.66rem; margin-top: 0.2rem; color: var(--md-on-surface-variant); }
+    .market-actions { display: flex; gap: 0.3rem; justify-content: center; margin-top: 0.4rem; }
+    .market-actions .btn-outlined { font-size: 0.64rem; padding: 0.35rem 0.45rem; }
 
     .gift-card.has { cursor: pointer; transition: transform 0.15s ease, box-shadow 0.15s ease; }
     .gift-card.has:hover { transform: translateY(-2px); }
@@ -614,6 +631,13 @@
     <div id="mines-msg"></div>
   </div>
 
+  <div id="mode-market" class="mode hidden" role="tabpanel">
+    <p class="hint">Маркет подарков: цена плавает вокруг базовой, можно покупать и продавать по 1 шт.</p>
+    <div class="stage-wrap" style="padding:0.65rem;">
+      <div id="market-grid" class="market-grid"></div>
+    </div>
+  </div>
+
   <div id="mode-gifts" class="mode hidden" role="tabpanel">
     <p class="hint">Инвентарь подарков Telegram. Подарок можно получить <strong>только</strong> после выигрыша (ракета/мины). Нажмите на подарок в инвентаре — апгрейд (шанс 50% или 25%).</p>
     <div class="stage-wrap" style="padding:0.65rem;margin-bottom:0.65rem;text-align:center;">
@@ -694,6 +718,7 @@
     <button type="button" class="active" data-mode="clicker" role="tab"><span class="nav-ico">👆</span>Тапы</button>
     <button type="button" data-mode="rocket" role="tab"><span class="nav-ico">✈️</span>Ракета</button>
     <button type="button" data-mode="mines" role="tab"><span class="nav-ico">💎</span>Мины</button>
+    <button type="button" data-mode="market" role="tab"><span class="nav-ico">📈</span>Маркет</button>
     <button type="button" data-mode="gifts" role="tab"><span class="nav-ico">🎁</span>Подарки</button>
     <button type="button" data-mode="upgrade" role="tab"><span class="nav-ico">⬆️</span>Апгрейд</button>
   </nav>
@@ -735,6 +760,7 @@
   const LS = "wallet_v3";
   const THEME_LS = "ui_theme";
   const INV_LS = "gifts_inventory_v5";
+  const MARKET_LS = "gift_market_v1";
   const TAP_LS = "tap_points_v1";
   const UPG_LS = "upgrades_v1";
 
@@ -820,6 +846,34 @@
   }
   function saveInventory(inv) {
     localStorage.setItem(INV_LS, JSON.stringify(inv));
+  }
+
+  function clamp(n, min, max) {
+    return Math.max(min, Math.min(max, n));
+  }
+  function loadMarket() {
+    try {
+      const o = JSON.parse(localStorage.getItem(MARKET_LS) || "{}");
+      return typeof o === "object" && o ? o : {};
+    } catch (e) {
+      return {};
+    }
+  }
+  function saveMarket(market) {
+    localStorage.setItem(MARKET_LS, JSON.stringify(market));
+  }
+  function ensureMarket() {
+    const prev = loadMarket();
+    const next = {};
+    GIFT_CATALOG.forEach((g) => {
+      const base = Math.max(1, g.price || 1);
+      const old = parseFloat(prev[g.id]);
+      const seed = Number.isFinite(old) && old > 0 ? old : base * (0.85 + Math.random() * 0.5);
+      const drift = 0.96 + Math.random() * 0.08;
+      next[g.id] = Math.max(1, Math.floor(clamp(seed * drift, base * 0.65, base * 1.75)));
+    });
+    saveMarket(next);
+    return next;
   }
 
   // Подарок за выигрыш: 1 подарок без выбора (оставить / продать).
@@ -972,6 +1026,97 @@
 
       card.addEventListener("click", () => openUpgrade(g.id));
       giftGridEl.appendChild(card);
+    });
+  }
+
+  const marketGridEl = document.getElementById("market-grid");
+  function renderMarket() {
+    const market = ensureMarket();
+    const inv = loadInventory();
+    marketGridEl.innerHTML = "";
+
+    GIFT_CATALOG.forEach((g) => {
+      const buyPrice = Math.max(1, Math.floor(market[g.id] || g.price || 1));
+      const sellPrice = Math.max(1, Math.floor(buyPrice * 0.92));
+      const have = Math.max(0, parseInt(inv[g.id], 10) || 0);
+
+      const card = document.createElement("div");
+      card.className = "market-card";
+
+      const img = document.createElement("img");
+      img.src = g.png;
+      img.alt = g.name;
+      img.referrerPolicy = "no-referrer";
+      img.loading = "lazy";
+      img.style.width = "62px";
+      img.style.height = "62px";
+      img.style.objectFit = "contain";
+      img.style.display = "block";
+      img.style.margin = "0 auto 0.25rem";
+
+      const name = document.createElement("div");
+      name.className = "gift-name";
+      name.textContent = g.name;
+
+      const p = document.createElement("div");
+      p.className = "market-price";
+      p.innerHTML = "Покупка: <strong>" + formatMoney(buyPrice) + "</strong><br/>Продажа: <strong>" + formatMoney(sellPrice) + "</strong>";
+
+      const own = document.createElement("div");
+      own.className = "gift-count";
+      own.innerHTML = "У вас: <strong>" + have + "</strong>";
+
+      const actions = document.createElement("div");
+      actions.className = "market-actions";
+      const buyBtn = document.createElement("button");
+      buyBtn.type = "button";
+      buyBtn.className = "btn-outlined";
+      buyBtn.textContent = "Купить 1";
+      buyBtn.disabled = wallet < buyPrice;
+      buyBtn.addEventListener("click", () => {
+        if (wallet < buyPrice) {
+          showToast("Недостаточно баланса");
+          return;
+        }
+        const currentInv = loadInventory();
+        wallet -= buyPrice;
+        persistWallet();
+        incInventory(currentInv, g.id, 1);
+        saveInventory(currentInv);
+        showToast("Куплен: " + g.name);
+        renderGiftInventory();
+        renderMarket();
+      });
+
+      const sellBtn = document.createElement("button");
+      sellBtn.type = "button";
+      sellBtn.className = "btn-outlined";
+      sellBtn.textContent = "Продать 1";
+      sellBtn.disabled = have <= 0;
+      sellBtn.addEventListener("click", () => {
+        const currentInv = loadInventory();
+        const count = Math.max(0, parseInt(currentInv[g.id], 10) || 0);
+        if (count <= 0) {
+          showToast("Нет такого подарка");
+          return;
+        }
+        decInventory(currentInv, g.id, 1);
+        saveInventory(currentInv);
+        wallet += sellPrice;
+        persistWallet();
+        showToast("Продано: +" + formatMoney(sellPrice));
+        renderGiftInventory();
+        renderMarket();
+      });
+
+      actions.appendChild(buyBtn);
+      actions.appendChild(sellBtn);
+      card.appendChild(img);
+      card.appendChild(name);
+      card.appendChild(p);
+      card.appendChild(own);
+      card.appendChild(actions);
+      marketGridEl.appendChild(card);
     });
   }
 
@@ -1250,6 +1395,7 @@
     persistWallet();
     saveInventory({});
     renderGiftInventory();
+    renderMarket();
     showToast("Продано на " + formatMoney(sum));
   }
 
@@ -1284,6 +1430,7 @@
       persistWallet();
       persistTaps();
       renderGiftInventory();
+      renderMarket();
       renderUpgrades();
       refreshTapUi();
     }
@@ -1358,6 +1505,7 @@
     clicker: document.getElementById("mode-clicker"),
     rocket: document.getElementById("mode-rocket"),
     mines: document.getElementById("mode-mines"),
+    market: document.getElementById("mode-market"),
     gifts: document.getElementById("mode-gifts"),
     upgrade: document.getElementById("mode-upgrade"),
   };
@@ -1367,11 +1515,13 @@
       tabButtons.forEach((b) => b.classList.toggle("active", b.getAttribute("data-mode") === m));
       Object.keys(modes).forEach((k) => modes[k].classList.toggle("hidden", k !== m));
       if (m === "gifts") renderGiftInventory();
+      if (m === "market") renderMarket();
       if (m === "upgrade") renderUpgrades();
       if (typeof redrawRocketCanvas === "function") redrawRocketCanvas();
     });
   });
   renderGiftInventory();
+  renderMarket();
   renderUpgrades();
 
   // updateMinesSeqPreview объявлен ниже, в блоке "Мины"
