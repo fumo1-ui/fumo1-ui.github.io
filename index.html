@@ -637,12 +637,16 @@
 
   <div id="toast" role="status" aria-live="polite"></div>
 
-  <div id="gift-pick-overlay" class="gift-pick-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="gift-pick-title">
+  <div id="gift-pick-overlay" class="gift-pick-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="gift-award-title">
     <div class="gift-pick-panel">
-      <h2 id="gift-pick-title">Выберите подарок</h2>
-      <p>Награда только за выигрыш. Апгрейд «Варианты подарка» увеличивает число карт на выбор.</p>
-      <div id="gift-pick-grid" class="gift-pick-grid"></div>
-      <button type="button" class="btn-outlined gift-pick-skip" id="gift-pick-skip">Пропустить подарок</button>
+      <h2 id="gift-award-title">🎁 Подарок за выигрыш</h2>
+      <p>Выпал один подарок. Выберите: оставить в инвентаре или продать.</p>
+      <div id="gift-award-slot" class="stage-wrap" style="padding:0.85rem;text-align:center;"></div>
+      <div style="display:flex;gap:0.5rem;justify-content:center;flex-wrap:wrap;">
+        <button type="button" class="btn-filled" id="gift-award-keep">Оставить</button>
+        <button type="button" class="btn-filled btn-danger" id="gift-award-sell">Продать</button>
+      </div>
+      <button type="button" class="btn-outlined gift-pick-skip" id="gift-award-close">Закрыть</button>
     </div>
   </div>
 
@@ -760,10 +764,7 @@
   function getMineBonusMult() {
     return 1 + loadUpg().mine * 0.02;
   }
-  function getGiftChoiceCount() {
-    const p = loadUpg().pick;
-    return Math.min(GIFT_CATALOG.length, 3 + p * 2);
-  }
+  // getGiftChoiceCount больше не используется (выбора подарка нет).
   function upgradeCost(level, base) {
     return Math.max(1, Math.floor(base * Math.pow(1.5, level)));
   }
@@ -810,52 +811,79 @@
     localStorage.setItem(INV_LS, JSON.stringify(inv));
   }
 
-  function sampleGiftChoices(n) {
-    const m = Math.min(n, GIFT_CATALOG.length);
-    const ix = [...Array(GIFT_CATALOG.length).keys()];
-    for (let i = ix.length - 1; i > 0; i--) {
-      const j = (Math.random() * (i + 1)) | 0;
-      [ix[i], ix[j]] = [ix[j], ix[i]];
-    }
-    return ix.slice(0, m).map((i) => GIFT_CATALOG[i]);
-  }
-
+  // Подарок за выигрыш: 1 подарок без выбора (оставить / продать).
   const giftPickOverlay = document.getElementById("gift-pick-overlay");
-  const giftPickGrid = document.getElementById("gift-pick-grid");
-  document.getElementById("gift-pick-skip").addEventListener("click", closeGiftPicker);
+  const giftAwardSlot = document.getElementById("gift-award-slot");
+  const giftAwardKeepBtn = document.getElementById("gift-award-keep");
+  const giftAwardSellBtn = document.getElementById("gift-award-sell");
+  const giftAwardCloseBtn = document.getElementById("gift-award-close");
 
-  function closeGiftPicker() {
-    giftPickOverlay.classList.add("hidden");
-    giftPickGrid.innerHTML = "";
+  let pendingAward = null;
+
+  function chooseAwardGiftByStake(stake) {
+    // Бюджет от ставки: нельзя получить дорогие подарки с маленькой ставки.
+    // Пример: stake 10 => budget 100, значит максимум подарок <=100.
+    const budget = Math.max(1, Math.floor(stake || 0)) * 10;
+    const eligible = GIFT_CATALOG.filter((g) => (g.price || 0) <= budget);
+    const pool = eligible.length ? eligible : [GIFT_CATALOG[0]];
+    return pool[(Math.random() * pool.length) | 0];
   }
 
-  function openGiftPicker() {
-    const choices = sampleGiftChoices(getGiftChoiceCount());
-    giftPickGrid.innerHTML = "";
-    choices.forEach((g) => {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.className = "gift-pick-item";
-      const img = document.createElement("img");
-      img.src = g.png;
-      img.alt = "";
-      img.referrerPolicy = "no-referrer";
-      const sp = document.createElement("span");
-      sp.textContent = g.name;
-      b.appendChild(img);
-      b.appendChild(sp);
-      b.addEventListener("click", () => {
-        const inv = loadInventory();
-        inv[g.id] = (inv[g.id] || 0) + 1;
-        saveInventory(inv);
-        showToast("«" + g.name + "» в инвентаре");
-        renderGiftInventory();
-        closeGiftPicker();
-      });
-      giftPickGrid.appendChild(b);
-    });
+  function renderPendingAward() {
+    giftAwardSlot.innerHTML = "";
+    if (!pendingAward) return;
+    const img = document.createElement("img");
+    img.src = pendingAward.png;
+    img.alt = "";
+    img.referrerPolicy = "no-referrer";
+    img.style.width = "72px";
+    img.style.height = "72px";
+    img.style.objectFit = "contain";
+    img.style.display = "block";
+    img.style.margin = "0 auto 0.35rem";
+    const title = document.createElement("div");
+    title.style.fontWeight = "800";
+    title.textContent = pendingAward.name;
+    const sub = document.createElement("div");
+    sub.style.fontSize = "0.82rem";
+    sub.style.color = "var(--md-on-surface-variant)";
+    sub.textContent = "⭐ " + pendingAward.price;
+    giftAwardSlot.appendChild(img);
+    giftAwardSlot.appendChild(title);
+    giftAwardSlot.appendChild(sub);
+  }
+
+  function closeGiftAward() {
+    giftPickOverlay.classList.add("hidden");
+    giftAwardSlot.innerHTML = "";
+    pendingAward = null;
+  }
+
+  function openGiftAward(stake) {
+    pendingAward = chooseAwardGiftByStake(stake);
+    renderPendingAward();
     giftPickOverlay.classList.remove("hidden");
   }
+
+  giftAwardKeepBtn.addEventListener("click", () => {
+    if (!pendingAward) return;
+    const inv = loadInventory();
+    inv[pendingAward.id] = (inv[pendingAward.id] || 0) + 1;
+    saveInventory(inv);
+    showToast("«" + pendingAward.name + "» в инвентаре");
+    renderGiftInventory();
+    closeGiftAward();
+  });
+
+  giftAwardSellBtn.addEventListener("click", () => {
+    if (!pendingAward) return;
+    wallet += (pendingAward.price || 0);
+    persistWallet();
+    showToast("Продано: +" + formatMoney(pendingAward.price || 0));
+    closeGiftAward();
+  });
+
+  giftAwardCloseBtn.addEventListener("click", closeGiftAward);
 
   function onWalletChange() {
     persistWallet();
@@ -1483,7 +1511,7 @@
     const gain = rocket.stake * rocket.currentX;
     wallet += gain;
     persistWallet();
-    openGiftPicker();
+    openGiftAward(rocket.stake);
     rocket.phase = "cashed";
     if (rocket.raf) cancelAnimationFrame(rocket.raf);
     rocket.raf = 0;
@@ -1670,7 +1698,7 @@
     const gain = mineStake * mineProduct * getMineBonusMult();
     wallet += gain;
     persistWallet();
-    openGiftPicker();
+    openGiftAward(mineStake);
     minePlaying = false;
     minesCashout.disabled = true;
     loseMineIndex = -1;
