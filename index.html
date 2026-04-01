@@ -337,6 +337,23 @@
     .market-price { font-size: 0.66rem; margin-top: 0.2rem; color: var(--md-on-surface-variant); }
     .market-actions { display: flex; gap: 0.3rem; justify-content: center; margin-top: 0.4rem; }
     .market-actions .btn-outlined { font-size: 0.64rem; padding: 0.35rem 0.45rem; }
+    .craft-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+      gap: 0.55rem;
+      width: 100%;
+    }
+    .craft-card {
+      background: var(--md-surface-container-high);
+      border-radius: var(--shape-lg);
+      padding: 0.55rem 0.4rem 0.5rem;
+      text-align: center;
+      box-shadow: var(--elev-1);
+      border: 1px solid color-mix(in srgb, var(--md-outline) 22%, transparent);
+    }
+    .craft-card .craft-arrow { font-size: 0.68rem; color: var(--md-on-surface-variant); margin: 0.25rem 0; line-height: 1.25; }
+    .craft-card .craft-actions { display: flex; flex-direction: column; gap: 0.35rem; margin-top: 0.4rem; }
+    .craft-card .craft-actions .btn-outlined { font-size: 0.62rem; padding: 0.38rem 0.4rem; width: 100%; }
 
     .gift-card.has { cursor: pointer; transition: transform 0.15s ease, box-shadow 0.15s ease; }
     .gift-card.has:hover { transform: translateY(-2px); }
@@ -631,6 +648,13 @@
     <div id="mines-msg"></div>
   </div>
 
+  <div id="mode-craft" class="mode hidden" role="tabpanel">
+    <p class="hint">Крафты: объединяйте одинаковые подарки из инвентаря в следующий по каталогу — без рулетки апгрейда.</p>
+    <div class="stage-wrap" style="padding:0.65rem;">
+      <div id="craft-grid" class="craft-grid"></div>
+    </div>
+  </div>
+
   <div id="mode-market" class="mode hidden" role="tabpanel">
     <p class="hint">Маркет подарков: цена плавает вокруг базовой, можно покупать и продавать по 1 шт.</p>
     <div class="stage-wrap" style="padding:0.65rem;">
@@ -718,6 +742,7 @@
     <button type="button" class="active" data-mode="clicker" role="tab"><span class="nav-ico">👆</span>Тапы</button>
     <button type="button" data-mode="rocket" role="tab"><span class="nav-ico">✈️</span>Ракета</button>
     <button type="button" data-mode="mines" role="tab"><span class="nav-ico">💎</span>Мины</button>
+    <button type="button" data-mode="craft" role="tab"><span class="nav-ico">🔧</span>Крафты</button>
     <button type="button" data-mode="market" role="tab"><span class="nav-ico">📈</span>Маркет</button>
     <button type="button" data-mode="gifts" role="tab"><span class="nav-ico">🎁</span>Подарки</button>
     <button type="button" data-mode="upgrade" role="tab"><span class="nav-ico">⬆️</span>Апгрейд</button>
@@ -885,12 +910,23 @@
 
   let pendingAward = null;
 
-  function chooseAwardGiftByStake(stake) {
-    // Бюджет от ставки: нельзя получить дорогие подарки с маленькой ставки.
-    // Пример: stake 10 => budget 100, значит максимум подарок <=100.
-    const budget = Math.max(1, Math.floor(stake || 0)) * 10;
-    const eligible = GIFT_CATALOG.filter((g) => (g.price || 0) <= budget);
-    const pool = eligible.length ? eligible : [GIFT_CATALOG[0]];
+  function chooseAwardGiftByStake(stake, gain) {
+    // capStake: лимит по ставке (×10). capGain: по фактическому выигрышу.
+    // Часть роллов — «узкий» бюджет min(оба): может выпасть подарок дешевле, чем позволял бы max(оба).
+    const capStake = Math.max(1, Math.floor(stake || 0)) * 10;
+    if (gain == null) {
+      const pool = GIFT_CATALOG.filter((g) => (g.price || 0) <= capStake);
+      const list = pool.length ? pool : [GIFT_CATALOG[0]];
+      return list[(Math.random() * list.length) | 0];
+    }
+    const capGain = Math.max(0, Math.floor(gain));
+    const budget = Math.max(capStake, capGain, 1);
+    const tight = Math.min(capStake, capGain);
+    const useTight = capGain > 0 && Math.random() < 0.28;
+    const limit = useTight ? Math.max(1, tight) : budget;
+    let pool = GIFT_CATALOG.filter((g) => (g.price || 0) <= limit);
+    if (!pool.length) pool = GIFT_CATALOG.filter((g) => (g.price || 0) <= budget);
+    if (!pool.length) pool = [GIFT_CATALOG[0]];
     return pool[(Math.random() * pool.length) | 0];
   }
 
@@ -924,8 +960,8 @@
     pendingAward = null;
   }
 
-  function openGiftAward(stake) {
-    pendingAward = chooseAwardGiftByStake(stake);
+  function openGiftAward(stake, gain) {
+    pendingAward = chooseAwardGiftByStake(stake, gain);
     renderPendingAward();
     giftPickOverlay.classList.remove("hidden");
   }
@@ -1118,6 +1154,111 @@
       card.appendChild(actions);
       marketGridEl.appendChild(card);
     });
+  }
+
+  const MERGE2_CRAFT_COST = 500;
+  const craftGridEl = document.getElementById("craft-grid");
+  function renderCrafts() {
+    if (!craftGridEl) return;
+    craftGridEl.innerHTML = "";
+    const inv = loadInventory();
+    GIFT_CATALOG.forEach((g) => {
+      const nextId = findNextGiftId(g.id);
+      if (!nextId) return;
+      const nextG = GIFT_CATALOG.find((x) => x.id === nextId);
+      if (!nextG) return;
+      const n = Math.max(0, parseInt(inv[g.id], 10) || 0);
+      const can3 = n >= 3;
+      const can2coins = n >= 2 && wallet >= MERGE2_CRAFT_COST;
+      if (!can3 && !can2coins) return;
+
+      const card = document.createElement("div");
+      card.className = "craft-card";
+
+      const img = document.createElement("img");
+      img.src = g.png;
+      img.alt = g.name;
+      img.referrerPolicy = "no-referrer";
+      img.loading = "lazy";
+      img.style.width = "56px";
+      img.style.height = "56px";
+      img.style.objectFit = "contain";
+      img.style.display = "block";
+      img.style.margin = "0 auto 0.2rem";
+
+      const name = document.createElement("div");
+      name.className = "gift-name";
+      name.textContent = g.name;
+
+      const arr = document.createElement("div");
+      arr.className = "craft-arrow";
+      arr.textContent = "→ «" + nextG.name + "» (⭐ " + nextG.price + ")";
+
+      const actions = document.createElement("div");
+      actions.className = "craft-actions";
+
+      if (can3) {
+        const b3 = document.createElement("button");
+        b3.type = "button";
+        b3.className = "btn-outlined";
+        b3.textContent = "3 одинаковых → 1";
+        b3.addEventListener("click", () => {
+          const inv2 = loadInventory();
+          if (Math.max(0, parseInt(inv2[g.id], 10) || 0) < 3) {
+            showToast("Недостаточно подарков");
+            return;
+          }
+          decInventory(inv2, g.id, 3);
+          incInventory(inv2, nextId, 1);
+          saveInventory(inv2);
+          showToast("Скрафт: «" + nextG.name + "»");
+          renderGiftInventory();
+          renderMarket();
+          renderCrafts();
+        });
+        actions.appendChild(b3);
+      }
+      if (can2coins) {
+        const b2 = document.createElement("button");
+        b2.type = "button";
+        b2.className = "btn-outlined";
+        b2.textContent = "2 + " + MERGE2_CRAFT_COST + " монет → 1";
+        b2.addEventListener("click", () => {
+          if (wallet < MERGE2_CRAFT_COST) {
+            showToast("Недостаточно баланса");
+            return;
+          }
+          const inv2 = loadInventory();
+          if (Math.max(0, parseInt(inv2[g.id], 10) || 0) < 2) {
+            showToast("Недостаточно подарков");
+            return;
+          }
+          wallet -= MERGE2_CRAFT_COST;
+          persistWallet();
+          decInventory(inv2, g.id, 2);
+          incInventory(inv2, nextId, 1);
+          saveInventory(inv2);
+          showToast("Скрафт: «" + nextG.name + "»");
+          renderGiftInventory();
+          renderMarket();
+          renderCrafts();
+        });
+        actions.appendChild(b2);
+      }
+
+      card.appendChild(img);
+      card.appendChild(name);
+      card.appendChild(arr);
+      card.appendChild(actions);
+      craftGridEl.appendChild(card);
+    });
+    if (!craftGridEl.children.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-inventory";
+      empty.style.gridColumn = "1 / -1";
+      empty.innerHTML = '<div class="emoji">🔧</div><div>Нет доступных крафтов</div><div style="font-size:0.75rem;margin-top:0.5rem;">Соберите 3 одинаковых подарка или 2 подарка и ' + MERGE2_CRAFT_COST + " монет — получите следующий по каталогу.</div>";
+      craftGridEl.appendChild(empty);
+    }
   }
 
   /* ——— Апгрейд подарков (спиннер) ——— */
@@ -1323,8 +1464,14 @@
   function pickFrom(list) {
     return list[(Math.random() * list.length) | 0];
   }
-  function buildPool(minPrice) {
-    return GIFT_CATALOG.filter((g) => (g.price || 0) >= minPrice);
+  /** Кейс: обычно из пула >= minPrice, но ~30% — «просадка», подарок ниже порога кейса. */
+  function pickCaseRollGift(minPrice) {
+    if (minPrice <= 0) return pickFrom(GIFT_CATALOG);
+    const high = GIFT_CATALOG.filter((g) => (g.price || 0) >= minPrice);
+    const low = GIFT_CATALOG.filter((g) => (g.price || 0) < minPrice);
+    if (!low.length) return pickFrom(high.length ? high : GIFT_CATALOG);
+    if (Math.random() < 0.3) return pickFrom(low);
+    return pickFrom(high.length ? high : GIFT_CATALOG);
   }
   function setCasesEnabled(on) {
     caseBasicBtn.disabled = !on;
@@ -1363,7 +1510,7 @@
     caseAnimEl.appendChild(small);
   }
 
-  function openCaseAnimated(cost, pool) {
+  function openCaseAnimated(cost, minPrice) {
     if (caseRolling) return;
     if (wallet < cost) {
       showToast("Недостаточно баланса для кейса");
@@ -1383,7 +1530,7 @@
     const tick = () => {
       const t = performance.now() - start;
       if (t >= rollMs) {
-        const win = pickFrom(pool);
+        const win = pickCaseRollGift(minPrice);
         const inv = loadInventory();
         inv[win.id] = (inv[win.id] || 0) + 1;
         saveInventory(inv);
@@ -1395,7 +1542,7 @@
         caseCloseBtn.disabled = false;
         return;
       }
-      const g = pickFrom(pool);
+      const g = pickCaseRollGift(minPrice);
       if (g !== last) {
         renderCaseAnimGift(g, "Открываем...");
         last = g;
@@ -1408,9 +1555,9 @@
   openCasesBtn.addEventListener("click", openCases);
   caseCloseBtn.addEventListener("click", closeCases);
   caseOverlay.addEventListener("click", (e) => { if (e.target === caseOverlay) closeCases(); });
-  caseBasicBtn.addEventListener("click", () => openCaseAnimated(100, buildPool(0)));
-  caseRareBtn.addEventListener("click", () => openCaseAnimated(300, buildPool(200)));
-  caseEpicBtn.addEventListener("click", () => openCaseAnimated(750, buildPool(500)));
+  caseBasicBtn.addEventListener("click", () => openCaseAnimated(100, 0));
+  caseRareBtn.addEventListener("click", () => openCaseAnimated(300, 200));
+  caseEpicBtn.addEventListener("click", () => openCaseAnimated(750, 500));
 
   function calcSellAll(inv) {
     let total = 0;
@@ -1436,6 +1583,7 @@
     if (sum <= 0) {
       saveInventory({});
       renderGiftInventory();
+      renderCrafts();
       showToast("Продано");
       return;
     }
@@ -1445,6 +1593,7 @@
     saveInventory({});
     renderGiftInventory();
     renderMarket();
+    renderCrafts();
     showToast("Продано на " + formatMoney(sum));
   }
 
@@ -1480,6 +1629,7 @@
       persistTaps();
       renderGiftInventory();
       renderMarket();
+      renderCrafts();
       renderUpgrades();
       refreshTapUi();
     }
@@ -1554,6 +1704,7 @@
     clicker: document.getElementById("mode-clicker"),
     rocket: document.getElementById("mode-rocket"),
     mines: document.getElementById("mode-mines"),
+    craft: document.getElementById("mode-craft"),
     market: document.getElementById("mode-market"),
     gifts: document.getElementById("mode-gifts"),
     upgrade: document.getElementById("mode-upgrade"),
@@ -1564,12 +1715,14 @@
       tabButtons.forEach((b) => b.classList.toggle("active", b.getAttribute("data-mode") === m));
       Object.keys(modes).forEach((k) => modes[k].classList.toggle("hidden", k !== m));
       if (m === "gifts") renderGiftInventory();
+      if (m === "craft") renderCrafts();
       if (m === "market") renderMarket();
       if (m === "upgrade") renderUpgrades();
       if (typeof redrawRocketCanvas === "function") redrawRocketCanvas();
     });
   });
   renderGiftInventory();
+  renderCrafts();
   renderMarket();
   renderUpgrades();
 
@@ -1721,7 +1874,7 @@
     const gain = rocket.stake * rocket.currentX;
     wallet += gain;
     persistWallet();
-    openGiftAward(rocket.stake);
+    openGiftAward(rocket.stake, gain);
     rocket.phase = "cashed";
     if (rocket.raf) cancelAnimationFrame(rocket.raf);
     rocket.raf = 0;
@@ -1908,7 +2061,7 @@
     const gain = mineStake * mineProduct * getMineBonusMult();
     wallet += gain;
     persistWallet();
-    openGiftAward(mineStake);
+    openGiftAward(mineStake, gain);
     minePlaying = false;
     minesCashout.disabled = true;
     loseMineIndex = -1;
