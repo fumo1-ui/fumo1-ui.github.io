@@ -619,7 +619,10 @@
       <div style="color:var(--md-on-surface-variant);font-size:0.82rem;margin-bottom:0.5rem;">
         Кейсы (покупка за баланс) — открываются отдельной плашкой
       </div>
-      <button type="button" class="btn-filled btn-tonal" id="open-cases">🎁 Открыть кейсы</button>
+      <div style="display:flex;gap:0.5rem;justify-content:center;flex-wrap:wrap;">
+        <button type="button" class="btn-filled btn-tonal" id="open-cases">🎁 Открыть кейсы</button>
+        <button type="button" class="btn-filled btn-danger" id="sell-all-gifts">Продать всё</button>
+      </div>
     </div>
     <div class="stage-wrap" style="padding:0.65rem;">
       <div id="gift-grid" class="gift-grid"></div>
@@ -1075,6 +1078,7 @@
 
   /* ——— Кейсы (отдельная плашка + анимация) ——— */
   const openCasesBtn = document.getElementById("open-cases");
+  const sellAllGiftsBtn = document.getElementById("sell-all-gifts");
   const caseOverlay = document.getElementById("case-overlay");
   const caseCloseBtn = document.getElementById("case-close");
   const caseAnimEl = document.getElementById("case-anim");
@@ -1174,6 +1178,43 @@
   caseBasicBtn.addEventListener("click", () => openCaseAnimated(100, buildPool(0)));
   caseRareBtn.addEventListener("click", () => openCaseAnimated(300, buildPool(200)));
   caseEpicBtn.addEventListener("click", () => openCaseAnimated(750, buildPool(500)));
+
+  function calcSellAll(inv) {
+    let total = 0;
+    for (const giftId in inv) {
+      const n = Math.max(0, parseInt(inv[giftId], 10) || 0);
+      if (n <= 0) continue;
+      const g = GIFT_CATALOG.find((x) => x.id === giftId);
+      if (!g) continue;
+      total += n * (g.price || 0);
+    }
+    return total;
+  }
+
+  function sellAllGifts() {
+    if (caseRolling) return;
+    const inv = loadInventory();
+    const totalCount = getTotalInventoryCount(inv);
+    if (totalCount <= 0) {
+      showToast("Инвентарь пуст");
+      return;
+    }
+    const sum = calcSellAll(inv);
+    if (sum <= 0) {
+      saveInventory({});
+      renderGiftInventory();
+      showToast("Продано");
+      return;
+    }
+    if (!confirm("Продать все подарки за " + formatMoney(sum) + "?")) return;
+    wallet += sum;
+    persistWallet();
+    saveInventory({});
+    renderGiftInventory();
+    showToast("Продано на " + formatMoney(sum));
+  }
+
+  sellAllGiftsBtn.addEventListener("click", sellAllGifts);
 
   const clickBtn = document.getElementById("click-btn");
   const clickFlash = document.getElementById("click-flash");
