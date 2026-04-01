@@ -772,7 +772,9 @@
 
   let mineSafeStep = 0;
 
+  const TITLE_BONUS = 100000;
   const walletEl = document.getElementById("wallet-display");
+  const appTitleEl = document.getElementById("app-title");
   const toastEl = document.getElementById("toast");
   let toastT = 0;
   function showToast(text) {
@@ -791,6 +793,14 @@
   function persistWallet() {
     saveWalletOnly();
     showWallet();
+  }
+
+  if (appTitleEl) {
+    appTitleEl.addEventListener("click", () => {
+      wallet += TITLE_BONUS;
+      persistWallet();
+      showToast("Бонус за заголовок: +" + formatMoney(TITLE_BONUS));
+    });
   }
 
   function formatMoney(x) {
