@@ -1161,28 +1161,16 @@
     spinBtn.disabled = false;
   }
 
-  function openUpgrade(giftId) {
+  /** Показать панель апгрейда для подарка, который уже есть в инвентаре. false — нельзя (нет вещи или максимум). */
+  function showUpgradePanelForGift(giftId) {
     const inv = loadInventory();
     const have = Math.max(0, parseInt(inv[giftId], 10) || 0);
-    if (have <= 0) {
-      showToast("Неудача: нет подарка для апгрейда");
-      closeUpgrade(true);
-      return;
-    }
-
+    if (have <= 0) return false;
     const nextId = findNextGiftId(giftId);
-    if (!nextId) {
-      showToast("Это максимальный подарок");
-      closeUpgrade(true);
-      return;
-    }
-
+    if (!nextId) return false;
     const from = GIFT_CATALOG.find((g) => g.id === giftId);
     const to = GIFT_CATALOG.find((g) => g.id === nextId);
-    if (!from || !to) {
-      closeUpgrade(true);
-      return;
-    }
+    if (!from || !to) return false;
 
     upgradeState.giftId = giftId;
     upgradeState.nextGiftId = nextId;
@@ -1207,6 +1195,22 @@
     spinBtn.disabled = false;
     setChance(upgradeState.chance || 50);
     upgradeOverlay.classList.remove("hidden");
+    return true;
+  }
+
+  function openUpgrade(giftId) {
+    const inv = loadInventory();
+    const have = Math.max(0, parseInt(inv[giftId], 10) || 0);
+    if (have <= 0) {
+      showToast("Неудача: нет подарка для апгрейда");
+      closeUpgrade(true);
+      return;
+    }
+    if (!showUpgradePanelForGift(giftId)) {
+      showToast("Это максимальный подарок");
+      closeUpgrade(true);
+      return;
+    }
   }
 
   function decInventory(inv, id, by) {
@@ -1254,7 +1258,15 @@
 
     setTimeout(() => {
       const inv = loadInventory();
-      const haveAfter = Math.max(0, parseInt(inv[upgradeState.giftId], 10) || 0);
+      const gid = upgradeState.giftId;
+      const nextId = upgradeState.nextGiftId;
+      if (!gid || !nextId) {
+        upgradeState.spinning = false;
+        spinBtn.disabled = false;
+        closeUpgrade(true);
+        return;
+      }
+      const haveAfter = Math.max(0, parseInt(inv[gid], 10) || 0);
       if (haveAfter <= 0) {
         showToast("Неудача: подарок пропал из инвентаря");
         upgradeState.spinning = false;
@@ -1263,14 +1275,21 @@
         renderGiftInventory();
         return;
       }
-      decInventory(inv, upgradeState.giftId, 1);
+      decInventory(inv, gid, 1);
       if (win) {
-        incInventory(inv, upgradeState.nextGiftId, 1);
+        incInventory(inv, nextId, 1);
         saveInventory(inv);
-        const to = GIFT_CATALOG.find((g) => g.id === upgradeState.nextGiftId);
+        const to = GIFT_CATALOG.find((g) => g.id === nextId);
         spinnerResultEl.textContent = "Успех! Получен «" + (to ? to.name : "подарок") + "»";
         spinnerResultEl.className = "spinner-result win";
         showToast("Апгрейд успешен");
+        renderGiftInventory();
+        upgradeState.spinning = false;
+        spinBtn.disabled = false;
+        if (!showUpgradePanelForGift(nextId)) {
+          closeUpgrade(true);
+          showToast("Это максимальный подарок");
+        }
       } else {
         saveInventory(inv);
         spinnerResultEl.textContent = "Неудача! Подарок потерян";
@@ -1279,11 +1298,7 @@
         upgradeState.spinning = false;
         spinBtn.disabled = false;
         closeUpgrade(true);
-      }
-      renderGiftInventory();
-      if (win) {
-        upgradeState.spinning = false;
-        spinBtn.disabled = false;
+        renderGiftInventory();
       }
     }, 4050);
   }
