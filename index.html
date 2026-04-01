@@ -82,7 +82,7 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      padding: 1rem 1rem calc(var(--bottom-nav-h) + 1rem);
+      padding: 1rem 1rem calc(var(--bottom-nav-h) + env(safe-area-inset-bottom, 0px) + 1rem);
       user-select: none;
     }
     h1 {
@@ -441,15 +441,16 @@
       bottom: 0;
       left: 0;
       right: 0;
-      height: var(--bottom-nav-h);
+      width: 100vw;
+      min-height: var(--bottom-nav-h);
+      height: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom, 0px));
       background: var(--md-surface-container-highest);
       border-top: 1px solid color-mix(in srgb, var(--md-outline) 22%, transparent);
       display: flex;
       justify-content: space-around;
       align-items: center;
-      padding: 0 0.25rem;
-      padding-bottom: env(safe-area-inset-bottom, 0);
-      z-index: 100;
+      padding: 0.2rem 0.25rem max(env(safe-area-inset-bottom, 0px), 0.2rem);
+      z-index: 1000;
       box-shadow: 0 -4px 16px rgba(0,0,0,.08);
     }
     .upgrade-card { margin-bottom: 0.65rem; padding: 0.75rem; border-radius: var(--shape-md); background: var(--md-surface-container-high); border: 1px solid color-mix(in srgb, var(--md-outline) 18%, transparent); }
