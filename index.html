@@ -589,6 +589,8 @@
       <div style="font-size:0.8rem;margin-top:0.25rem;color:var(--md-on-surface-variant);">Тапы: <strong id="tap-display" style="color:var(--md-primary);">0</strong></div>
     </div>
     <div class="wallet-actions">
+      <input type="text" id="promo-input" placeholder="Промокод" style="width:116px;background:var(--md-surface);border:1px solid color-mix(in srgb, var(--md-outline) 40%, transparent);color:var(--md-on-surface);border-radius:var(--shape-sm);padding:0.4rem 0.5rem;font:inherit;font-size:0.75rem;" />
+      <button type="button" class="btn-outlined btn-theme" id="promo-apply">Активировать</button>
       <button type="button" class="btn-outlined btn-theme" id="theme-toggle">Тёмная</button>
       <button type="button" class="btn-outlined btn-theme" id="reset-wallet">Сброс</button>
     </div>
@@ -788,6 +790,7 @@
   const MARKET_LS = "gift_market_v1";
   const TAP_LS = "tap_points_v1";
   const UPG_LS = "upgrades_v1";
+  const USED_PROMO_LS = "used_promocodes_v1";
 
   let wallet = parseFloat(localStorage.getItem(LS)) || 0;
   let tapPoints = parseFloat(localStorage.getItem(TAP_LS)) || 0;
@@ -861,6 +864,53 @@
   function formatX(x) { return x.toFixed(2); }
   function formatMultShort(m) {
     return (Math.round(m * 10) / 10).toFixed(1);
+  }
+  function normalizePromoCode(code) {
+    return String(code || "").trim().toUpperCase();
+  }
+  function loadUsedPromoCodes() {
+    try {
+      const arr = JSON.parse(localStorage.getItem(USED_PROMO_LS) || "[]");
+      if (Array.isArray(arr)) {
+        return new Set(arr.map((x) => normalizePromoCode(x)).filter(Boolean));
+      }
+    } catch (e) {}
+    return new Set();
+  }
+  function saveUsedPromoCodes(set) {
+    localStorage.setItem(USED_PROMO_LS, JSON.stringify(Array.from(set)));
+  }
+  function parsePromoTxt(text) {
+    const map = new Map();
+    String(text || "").split(/\r?\n/).forEach((line) => {
+      const raw = line.trim();
+      if (!raw || raw.startsWith("#")) return;
+      const i = raw.indexOf(":");
+      if (i <= 0) return;
+      const code = normalizePromoCode(raw.slice(0, i));
+      const amount = parseFloat(raw.slice(i + 1).trim());
+      if (!code || !Number.isFinite(amount) || amount <= 0) return;
+      map.set(code, amount);
+    });
+    return map;
+  }
+  async function loadPromoMap() {
+    const paths = [
+      "promocodes.txt",
+      "./promocodes.txt",
+      "/balance-racket/promocodes.txt",
+    ];
+    for (const p of paths) {
+      try {
+        const res = await fetch(p + "?ts=" + Date.now(), { cache: "no-store" });
+        if (!res.ok) continue;
+        return parsePromoTxt(await res.text());
+      } catch (e) {}
+    }
+    if (location.protocol === "file:") {
+      throw new Error("PROMO_FILE_PROTOCOL_BLOCK");
+    }
+    throw new Error("PROMO_FILE_NOT_FOUND");
   }
 
   function loadInventory() {
@@ -997,6 +1047,45 @@
   function persistTaps() {
     localStorage.setItem(TAP_LS, String(tapPoints));
     showTaps();
+  }
+  const promoInputEl = document.getElementById("promo-input");
+  const promoApplyBtn = document.getElementById("promo-apply");
+  if (promoApplyBtn && promoInputEl) {
+    promoApplyBtn.addEventListener("click", async () => {
+      const code = normalizePromoCode(promoInputEl.value);
+      if (!code) {
+        showToast("Введите промокод");
+        return;
+      }
+      promoApplyBtn.disabled = true;
+      try {
+        const promos = await loadPromoMap();
+        if (!promos.has(code)) {
+          showToast("Промокод не найден");
+          return;
+        }
+        const used = loadUsedPromoCodes();
+        if (used.has(code)) {
+          showToast("Промокод уже использован");
+          return;
+        }
+        const amount = promos.get(code) || 0;
+        wallet += amount;
+        persistWallet();
+        used.add(code);
+        saveUsedPromoCodes(used);
+        promoInputEl.value = "";
+        showToast("Промокод применён: +" + formatMoney(amount));
+      } catch (e) {
+        if (e && e.message === "PROMO_FILE_PROTOCOL_BLOCK") {
+          showToast("Откройте через локальный сервер (не file://), например Live Server");
+        } else {
+          showToast("Ошибка чтения promocodes.txt");
+        }
+      } finally {
+        promoApplyBtn.disabled = false;
+      }
+    });
   }
 
   const giftGridEl = document.getElementById("gift-grid");
